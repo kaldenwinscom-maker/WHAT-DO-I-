@@ -1,0 +1,52 @@
+{
+  "name": "what-ai-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WHAT - AI Agency Platform: Multi-provider AI chat, agents, workflows, CRM, and analytics",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/ssr": "^0.5.0",
+    "openai": "^4.67.0",
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@google/generative-ai": "^0.21.0",
+    "stripe": "^17.0.0",
+    "@stripe/stripe-js": "^4.8.0",
+    "ai": "^3.4.0",
+    "zod": "^3.23.8",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
+    "react-syntax-highlighter": "^15.5.0",
+    "date-fns": "^4.1.0",
+    "uuid": "^10.0.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.11.0",
+    "recharts": "^2.13.0",
+    "react-hot-toast": "^2.4.1",
+    "react-dropzone": "^14.3.0",
+    "react-resizable-panels": "^2.1.4",
+    "lucide-react": "^0.453.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/uuid": "^10",
+    "typescript": "^5",
+    "tailwindcss": "^3.4.14",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}
