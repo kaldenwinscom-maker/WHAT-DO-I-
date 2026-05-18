@@ -120,7 +120,7 @@ const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 function useTimer(sec: number, onDone?: () => void) {
   const [t, setT] = useState(sec);
   const [running, setRunning] = useState(false);
-  const ref = useRef<ReturnType<typeof setTimeout>>();
+  const ref = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     if (!running) return;
     if (t <= 0) { setRunning(false); onDone?.(); return; }
@@ -920,7 +920,7 @@ function AccentGame({ players }: { players: Player[] }) {
 function FreezeGame() {
   const [state, setState] = useState<"idle"|"running"|"freeze">("idle");
   const [countdown, setCountdown] = useState(0);
-  const tRef = useRef<ReturnType<typeof setTimeout>>();
+  const tRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const start = () => {
     setState("running");
     const wait = 5000 + Math.random() * 15000;
