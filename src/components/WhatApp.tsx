@@ -1,10 +1,20 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { supabase } from "@/lib/supabase";
 
 /* ─── TYPES ───────────────────────────────────────────────────────────────── */
 type Cat = "trending" | "finger" | "more" | "family" | "party";
-type View = "home" | "detail" | "setup" | "playing" | "profile";
+type View = "home" | "detail" | "setup" | "playing" | "profile" | "room-setup" | "room-lobby";
 type AuthStep = "choose" | "email" | "phone" | "otp";
+
+interface RoomPlayer { id: string; name: string; avatar: string; isHost: boolean; }
+interface RoomOpts   { code: string; name: string; avatar: string; isHost: boolean; }
+interface MultiCtx {
+  isHost: boolean; myId: string;
+  roomPlayers: RoomPlayer[];
+  syncIdx: number;
+  advance: (idx: number) => void;
+}
 
 interface Game {
   id: string; name: string; emoji: string; cat: Cat;
@@ -117,6 +127,19 @@ const uid = () => Math.random().toString(36).slice(2);
 const shuffle = <T,>(a: T[]) => [...a].sort(() => Math.random() - 0.5);
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
+const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const genCode = () => Array.from({length:6}, () => ROOM_CHARS[Math.floor(Math.random()*ROOM_CHARS.length)]).join('');
+function getDeviceId() {
+  if (typeof window === 'undefined') return uid();
+  let id = localStorage.getItem('wdi_dev');
+  if (!id) { id = uid(); localStorage.setItem('wdi_dev', id); }
+  return id;
+}
+
+/* ─── MULTI CONTEXT ───────────────────────────────────────────────────────── */
+const MultiCtxCtx = createContext<MultiCtx | undefined>(undefined);
+const useMC = () => useContext(MultiCtxCtx);
+
 function useTimer(sec: number, onDone?: () => void) {
   const [t, setT] = useState(sec);
   const [running, setRunning] = useState(false);
@@ -135,20 +158,70 @@ function useTimer(sec: number, onDone?: () => void) {
   };
 }
 
+/* ─── ROOM HOOK ───────────────────────────────────────────────────────────── */
+function useRoom(opts: RoomOpts | null) {
+  const [roomPlayers, setRoomPlayers] = useState<RoomPlayer[]>([]);
+  const [started, setStarted] = useState(false);
+  const [syncIdx, setSyncIdx] = useState(0);
+  const myId = useRef(getDeviceId()).current;
+  const chRef = useRef<ReturnType<typeof supabase.channel> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!opts) { setRoomPlayers([]); setStarted(false); setSyncIdx(0); return; }
+    const { code, name, avatar, isHost } = opts;
+    const ch = supabase.channel(`wdi_r_${code}`, { config: { presence: { key: myId } } });
+    chRef.current = ch;
+    type Meta = { name: string; avatar: string; isHost: boolean };
+    ch
+      .on('presence', { event: 'sync' }, () => {
+        const state = ch.presenceState<Meta>();
+        setRoomPlayers(Object.entries(state).map(([id, metas]) => {
+          const m = (metas as Meta[])[0];
+          return { id, name: m.name, avatar: m.avatar, isHost: m.isHost };
+        }));
+      })
+      .on('broadcast', { event: 'start' }, () => setStarted(true))
+      .on('broadcast', { event: 'adv' }, ({ payload }: { payload: { idx: number } }) => setSyncIdx(payload.idx))
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') await ch.track({ name, avatar, isHost });
+      });
+    return () => { supabase.removeChannel(ch); chRef.current = undefined; };
+  }, [opts?.code]);
+
+  const advance = useCallback((idx: number) => {
+    setSyncIdx(idx);
+    chRef.current?.send({ type:'broadcast', event:'adv', payload:{idx} });
+  }, []);
+
+  const startRoom = useCallback(() => {
+    setStarted(true);
+    chRef.current?.send({ type:'broadcast', event:'start', payload:{} });
+  }, []);
+
+  return { roomPlayers, started, syncIdx, advance, startRoom, myId };
+}
+
 /* ─── PROMPT CARD GAME ────────────────────────────────────────────────────── */
 function PromptGame({ prompts, accent, footer }: { prompts: string[]; accent?: string; footer?: string }) {
-  const [idx, setIdx] = useState(() => Math.floor(Math.random() * prompts.length));
+  const mc = useMC();
+  const [localIdx, setLocalIdx] = useState(() => Math.floor(Math.random() * prompts.length));
+  const idx = mc ? mc.syncIdx % prompts.length : localIdx % prompts.length;
+  const handleNext = () => {
+    if (mc) mc.advance((mc.syncIdx + 1) % prompts.length);
+    else setLocalIdx(i => (i + 1) % prompts.length);
+  };
   return (
     <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:24, padding:"24px 0" }}>
       <div className="pg-prompt-card" style={accent ? { borderColor: accent + "44" } : {}}>
         <p style={{ fontSize:22, fontWeight:600, textAlign:"center", lineHeight:1.4 }}>
-          {prompts[idx % prompts.length]}
+          {prompts[idx]}
         </p>
       </div>
       {footer && <p style={{ fontSize:13, color:"var(--t2)", textAlign:"center" }}>{footer}</p>}
-      <button className="pg-btn-primary" onClick={() => setIdx(i => (i + 1) % prompts.length)}>
-        Next →
-      </button>
+      {mc && !mc.isHost
+        ? <p style={{ fontSize:13, color:"var(--t2)" }}>👑 Host controls the cards</p>
+        : <button className="pg-btn-primary" onClick={handleNext}>Next →</button>
+      }
     </div>
   );
 }
@@ -962,8 +1035,142 @@ function VibeCheckGame() {
   return <PromptGame prompts={C.vibeCheck} footer="Discuss as a group — everyone shares their answer!" />;
 }
 
+/* ─── ROOM SETUP SCREEN ───────────────────────────────────────────────────── */
+function RoomSetupScreen({ game, onJoined, onBack }: {
+  game: Game; onBack: () => void;
+  onJoined: (opts: RoomOpts) => void;
+}) {
+  const [tab, setTab]         = useState<'create'|'join'>('create');
+  const [name, setName]       = useState('');
+  const [avatar, setAvatar]   = useState(() => pick(AVATARS));
+  const [code]                = useState(() => genCode());
+  const [joinCode, setJoinCode] = useState('');
+  const [pickAv, setPickAv]   = useState(false);
+
+  const create = () => { if (name.trim()) onJoined({ code, name: name.trim(), avatar, isHost: true }); };
+  const join   = () => {
+    const c = joinCode.trim().toUpperCase();
+    if (name.trim() && c.length === 6) onJoined({ code: c, name: name.trim(), avatar, isHost: false });
+  };
+
+  return (
+    <div className="pg-screen">
+      <div className="pg-setup-header">
+        <button className="pg-back-btn-dark" onClick={onBack}>← Back</button>
+        <span style={{ fontWeight:700 }}>Play Online</span>
+        <div style={{ width:60 }} />
+      </div>
+      <div style={{ padding:"20px 16px", display:"flex", flexDirection:"column", gap:20 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 16px", background:"rgba(255,255,255,0.06)", borderRadius:12 }}>
+          <span style={{ fontSize:28 }}>{game.emoji}</span>
+          <div>
+            <div style={{ fontWeight:700 }}>{game.name}</div>
+            <div style={{ fontSize:12, color:"var(--t2)" }}>Online multiplayer</div>
+          </div>
+        </div>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <p style={{ fontWeight:600, margin:0 }}>Your Name</p>
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={() => setPickAv(p => !p)} style={{ fontSize:38, background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:12, padding:"6px 10px", cursor:"pointer", flexShrink:0 }}>{avatar}</button>
+            <input className="pg-input" value={name} onChange={e => setName(e.target.value)} placeholder="Enter your name…" style={{ flex:1 }} />
+          </div>
+          {pickAv && (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8, background:"rgba(255,255,255,0.06)", borderRadius:12, padding:10 }}>
+              {AVATARS.map(a => (
+                <button key={a} onClick={() => { setAvatar(a); setPickAv(false); }} style={{ fontSize:24, background:avatar===a?"rgba(108,99,255,0.3)":"none", border:"none", borderRadius:8, padding:4, cursor:"pointer" }}>{a}</button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display:"flex", background:"rgba(255,255,255,0.06)", borderRadius:12, padding:4, gap:4 }}>
+          {(['create','join'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ flex:1, padding:"10px", borderRadius:10, border:"none", background:tab===t?"rgba(108,99,255,0.4)":"transparent", color:"var(--text)", fontWeight:tab===t?700:400, cursor:"pointer", transition:"all 0.2s", fontSize:14 }}>
+              {t === 'create' ? '🏠 Create Room' : '🔗 Join Room'}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'create' ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <div style={{ textAlign:"center", padding:"18px", background:"rgba(255,255,255,0.06)", borderRadius:12 }}>
+              <div style={{ fontSize:12, color:"var(--t2)", marginBottom:6 }}>Your room code</div>
+              <div style={{ fontSize:42, fontWeight:900, letterSpacing:8, color:"var(--accent-p)" }}>{code}</div>
+              <div style={{ fontSize:12, color:"var(--t3)", marginTop:4 }}>Share this with friends</div>
+            </div>
+            <button className="pg-btn-primary" style={{ fontSize:16, padding:"16px" }} disabled={!name.trim()} onClick={create}>Create Room →</button>
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <input className="pg-input" value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0,6))} placeholder="XXXXXX" style={{ textAlign:"center", fontSize:30, fontWeight:700, letterSpacing:8 }} maxLength={6} />
+            <button className="pg-btn-primary" style={{ fontSize:16, padding:"16px" }} disabled={!name.trim() || joinCode.trim().length !== 6} onClick={join}>Join Room →</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── ROOM LOBBY SCREEN ───────────────────────────────────────────────────── */
+function RoomLobbyScreen({ game, roomOpts, roomPlayers, myId, onStart, onBack }: {
+  game: Game; roomOpts: RoomOpts;
+  roomPlayers: RoomPlayer[]; myId: string;
+  onStart: () => void; onBack: () => void;
+}) {
+  const share = () => {
+    if (navigator.share) navigator.share({ title:`Join my ${game.name} room!`, text:`Code: ${roomOpts.code}` });
+    else navigator.clipboard?.writeText(roomOpts.code);
+  };
+
+  return (
+    <div className="pg-screen">
+      <div className="pg-setup-header">
+        <button className="pg-back-btn-dark" onClick={onBack}>← Leave</button>
+        <span style={{ fontWeight:700 }}>Room Lobby</span>
+        <div style={{ width:60 }} />
+      </div>
+      <div style={{ padding:"20px 16px", display:"flex", flexDirection:"column", gap:20 }}>
+        <div style={{ textAlign:"center", padding:"20px", background:"linear-gradient(135deg,rgba(108,99,255,0.2),rgba(118,75,162,0.2))", borderRadius:16, border:"1px solid rgba(108,99,255,0.3)" }}>
+          <div style={{ fontSize:12, color:"var(--t2)", marginBottom:4 }}>Room Code</div>
+          <div style={{ fontSize:44, fontWeight:900, letterSpacing:10, color:"var(--accent-p)" }}>{roomOpts.code}</div>
+          <div style={{ fontSize:12, color:"var(--t3)", marginTop:4 }}>{game.emoji} {game.name}</div>
+          <button onClick={share} style={{ marginTop:10, padding:"7px 18px", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:20, color:"var(--text)", cursor:"pointer", fontSize:13 }}>📤 Share Code</button>
+        </div>
+
+        <div>
+          <p style={{ fontWeight:600, marginBottom:10 }}>Players ({roomPlayers.length})</p>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {roomPlayers.length === 0 && <div style={{ textAlign:"center", padding:20, color:"var(--t2)" }}>Connecting…</div>}
+            {roomPlayers.map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 16px", background:"rgba(255,255,255,0.06)", borderRadius:12 }}>
+                <span style={{ fontSize:28 }}>{p.avatar}</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:600 }}>{p.name}{p.id === myId ? " (You)" : ""}</div>
+                  {p.isHost && <div style={{ fontSize:12, color:"var(--accent-p)" }}>👑 Host</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {roomOpts.isHost ? (
+          <button className="pg-btn-primary" style={{ fontSize:18, padding:"18px" }} disabled={roomPlayers.length < game.min} onClick={onStart}>
+            {roomPlayers.length < game.min ? `Need ${game.min - roomPlayers.length} more` : `Start Game (${roomPlayers.length} players) →`}
+          </button>
+        ) : (
+          <div style={{ textAlign:"center", padding:"20px", background:"rgba(255,255,255,0.04)", borderRadius:12 }}>
+            <div style={{ fontSize:32, marginBottom:8 }}>⏳</div>
+            <div style={{ fontWeight:600 }}>Waiting for host to start…</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── PLAYING SCREEN (game router) ───────────────────────────────────────── */
-function PlayingScreen({ game, players, onBack }: { game: Game; players: Player[]; onBack: () => void }) {
+function PlayingScreen({ game, players, mc, onBack }: { game: Game; players: Player[]; mc?: MultiCtx; onBack: () => void }) {
   const GameComponent = () => {
     switch (game.id) {
       case "never":       return <NeverGame />;
@@ -1003,12 +1210,15 @@ function PlayingScreen({ game, players, onBack }: { game: Game; players: Player[
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <span style={{ fontSize:22 }}>{game.emoji}</span>
           <span style={{ fontWeight:700, fontSize:16 }}>{game.name}</span>
+          {mc && <span style={{ fontSize:11, background:"rgba(255,255,255,0.2)", borderRadius:10, padding:"2px 7px" }}>🌐 Online</span>}
         </div>
         <div style={{ width:60 }} />
       </div>
       <div className="pg-playing-body">
         <div className="pg-playing-inner">
-          <GameComponent />
+          <MultiCtxCtx.Provider value={mc}>
+            <GameComponent />
+          </MultiCtxCtx.Provider>
         </div>
       </div>
     </div>
@@ -1084,9 +1294,9 @@ function HomeScreen({ profile, onSelectGame, onProfile }: {
 }
 
 /* ─── DETAIL SCREEN ───────────────────────────────────────────────────────── */
-function DetailScreen({ game, profile, onStart, onBack, onPremium, onAuth }: {
+function DetailScreen({ game, profile, onStart, onPlayOnline, onBack, onPremium, onAuth }: {
   game: Game; profile: Profile | null;
-  onStart: () => void; onBack: () => void;
+  onStart: () => void; onPlayOnline: () => void; onBack: () => void;
   onPremium: () => void; onAuth: () => void;
 }) {
   const locked = game.premium && !(profile?.premium);
@@ -1127,7 +1337,10 @@ function DetailScreen({ game, profile, onStart, onBack, onPremium, onAuth }: {
             {!profile && <button className="pg-btn-ghost" style={{ textAlign:"center" }} onClick={onAuth}>Log in to play</button>}
           </>
         ) : (
-          <button className="pg-btn-primary" style={{ fontSize:18, padding:"18px" }} onClick={onStart}>Play Now →</button>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <button className="pg-btn-primary" style={{ fontSize:18, padding:"18px" }} onClick={onStart}>▶ Play Locally</button>
+            <button onClick={onPlayOnline} style={{ padding:"14px", borderRadius:14, border:"1px solid rgba(108,99,255,0.5)", background:"rgba(108,99,255,0.15)", color:"var(--text)", cursor:"pointer", fontWeight:600, fontSize:15 }}>🌐 Play Online with Friends</button>
+          </div>
         )}
       </div>
     </div>
@@ -1421,6 +1634,18 @@ export default function WhatApp() {
   const [showPrem, setShowPrem]   = useState(false);
   const [toast, setToast]         = useState<string | null>(null);
   const [navTab, setNavTab]       = useState<NavTab>("games");
+  const [roomOpts, setRoomOpts]   = useState<RoomOpts | null>(null);
+
+  const room = useRoom(roomOpts);
+
+  // Guests auto-start when host fires the start event
+  useEffect(() => {
+    if (room.started && view === "room-lobby" && roomOpts && !roomOpts.isHost) {
+      const ps: Player[] = room.roomPlayers.map(p => ({ id: p.id, name: `${p.avatar} ${p.name}`, score: 0 }));
+      setPlayers(ps.length > 0 ? ps : [{ id: roomOpts.name, name: `${roomOpts.avatar} ${roomOpts.name}`, score: 0 }]);
+      go("playing");
+    }
+  }, [room.started, view]);
 
   const go = (v: View) => setView(v);
 
@@ -1452,6 +1677,14 @@ export default function WhatApp() {
     setToast(`Welcome, ${p.name}! 🎉`);
   };
 
+  const mc: MultiCtx | undefined = roomOpts ? {
+    isHost: roomOpts.isHost,
+    myId: room.myId,
+    roomPlayers: room.roomPlayers,
+    syncIdx: room.syncIdx,
+    advance: room.advance,
+  } : undefined;
+
   return (
     <div className="pg-root">
       {/* Screens */}
@@ -1467,9 +1700,32 @@ export default function WhatApp() {
           game={selectedGame}
           profile={profile}
           onStart={handleStart}
+          onPlayOnline={() => go("room-setup")}
           onBack={() => go("home")}
           onPremium={() => setShowPrem(true)}
           onAuth={() => setShowAuth(true)}
+        />
+      )}
+      {view === "room-setup" && selectedGame && (
+        <RoomSetupScreen
+          game={selectedGame}
+          onJoined={opts => { setRoomOpts(opts); go("room-lobby"); }}
+          onBack={() => go("detail")}
+        />
+      )}
+      {view === "room-lobby" && selectedGame && roomOpts && (
+        <RoomLobbyScreen
+          game={selectedGame}
+          roomOpts={roomOpts}
+          roomPlayers={room.roomPlayers}
+          myId={room.myId}
+          onStart={() => {
+            const ps: Player[] = room.roomPlayers.map(p => ({ id: p.id, name: `${p.avatar} ${p.name}`, score: 0 }));
+            setPlayers(ps.length > 0 ? ps : [{ id: roomOpts.name, name: `${roomOpts.avatar} ${roomOpts.name}`, score: 0 }]);
+            room.startRoom();
+            go("playing");
+          }}
+          onBack={() => { setRoomOpts(null); go("detail"); }}
         />
       )}
       {view === "setup" && selectedGame && (
@@ -1483,7 +1739,8 @@ export default function WhatApp() {
         <PlayingScreen
           game={selectedGame}
           players={players}
-          onBack={() => go("setup")}
+          mc={mc}
+          onBack={() => { if (roomOpts) { setRoomOpts(null); go("detail"); } else go("setup"); }}
         />
       )}
       {view === "profile" && (
