@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseReady } from "@/lib/supabase";
 
 /* ─── TYPES ───────────────────────────────────────────────────────────────── */
 type Cat = "trending" | "finger" | "more" | "family" | "party";
@@ -168,6 +168,7 @@ function useRoom(opts: RoomOpts | null) {
 
   useEffect(() => {
     if (!opts) { setRoomPlayers([]); setStarted(false); setSyncIdx(0); return; }
+    if (!supabaseReady) return;
     const { code, name, avatar, isHost } = opts;
     const ch = supabase.channel(`wdi_r_${code}`, { config: { presence: { key: myId } } });
     chRef.current = ch;
@@ -1154,9 +1155,16 @@ function RoomLobbyScreen({ game, roomOpts, roomPlayers, myId, onStart, onBack }:
           </div>
         </div>
 
+        {!supabaseReady && (
+          <div style={{ padding:"12px 16px", background:"rgba(255,165,0,0.1)", border:"1px solid rgba(255,165,0,0.3)", borderRadius:10, fontSize:13, color:"#ffa500", textAlign:"center" }}>
+            ⚠️ Set <b>NEXT_PUBLIC_SUPABASE_URL</b> &amp; <b>NEXT_PUBLIC_SUPABASE_ANON_KEY</b> in Vercel to enable real-time sync
+          </div>
+        )}
         {roomOpts.isHost ? (
-          <button className="pg-btn-primary" style={{ fontSize:18, padding:"18px" }} disabled={roomPlayers.length < game.min} onClick={onStart}>
-            {roomPlayers.length < game.min ? `Need ${game.min - roomPlayers.length} more` : `Start Game (${roomPlayers.length} players) →`}
+          <button className="pg-btn-primary" style={{ fontSize:18, padding:"18px" }} disabled={!supabaseReady && roomPlayers.length < 1} onClick={onStart}>
+            {supabaseReady
+              ? (roomPlayers.length < game.min ? `Need ${game.min - roomPlayers.length} more` : `Start Game (${roomPlayers.length} players) →`)
+              : "Start Solo (no Supabase configured)"}
           </button>
         ) : (
           <div style={{ textAlign:"center", padding:"20px", background:"rgba(255,255,255,0.04)", borderRadius:12 }}>
