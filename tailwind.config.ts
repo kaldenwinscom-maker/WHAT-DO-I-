@@ -9,24 +9,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: '#060810',
-        bg2: '#0b0f1a',
-        bg3: '#101525',
-        accent: '#6c63ff',
-        accent2: '#00d4aa',
-        accent3: '#ff6b6b',
-        accent4: '#f5a623',
+        'geo-dark':  '#0a0a0f',
+        'geo-dark2': '#111118',
       },
       fontFamily: {
-        sans: ['DM Sans', 'sans-serif'],
-        display: ['Syne', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       animation: {
-        'float': 'float 6s ease-in-out infinite',
-        'pulse-glow': 'pulse-glow 3s ease-in-out infinite',
-        'slide-up': 'slide-up 0.6s cubic-bezier(0.22,1,0.36,1) both',
-        'fade-in': 'fade-in 0.5s ease both',
-        'spin-slow': 'spin-slow 20s linear infinite',
+        'fade-in':  'fade-in  0.3s ease both',
+        'slide-up': 'slide-up 0.35s cubic-bezier(0.22,1,0.36,1) both',
+        'scale-in': 'scale-in 0.3s cubic-bezier(0.22,1,0.36,1) both',
       }
     },
   },

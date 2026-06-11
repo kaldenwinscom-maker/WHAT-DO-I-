@@ -2,18 +2,18 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "WHAT DO I? — Party Games",
-  description: "25 epic party games for any group. Never Have I Ever, Truth or Dare, Werewolf, Trivia, and more — all in one app.",
-  keywords: "party games, never have i ever, truth or dare, werewolf, party app, group games",
+  title: "GeoGuess — World Geography Game",
+  description: "A polished GeoGuessr-style geography game. Guess locations from photos, play with friends in real-time or via challenge links.",
+  keywords: "geography game, geoguessr, world map, location guessing, multiplayer",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "WHAT DO I?",
+    title: "GeoGuess",
   },
   openGraph: {
-    title: "WHAT DO I? — Party Games",
-    description: "25 epic party games. Play anywhere, anytime.",
+    title: "GeoGuess — World Geography Game",
+    description: "Guess locations from photos and compete with friends around the world.",
     type: "website",
   },
 };
@@ -24,7 +24,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0a0612",
+  themeColor: "#0a0a0f",
 };
 
 export default function RootLayout({ children }: { children: import("react").ReactNode }) {

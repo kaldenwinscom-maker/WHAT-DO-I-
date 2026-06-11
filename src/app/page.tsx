@@ -1,5 +1,5 @@
-import WhatApp from "@/components/WhatApp";
+import GeoGuesserApp from "@/components/GeoGuesserApp";
 
 export default function Home() {
-  return <WhatApp />;
+  return <GeoGuesserApp />;
 }
